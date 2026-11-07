@@ -1,0 +1,16 @@
+# Keep only the latest packaged plugin; ignore all older versions
+geocentroid-gis-tools-*.rgplugin
+!geocentroid-gis-tools-1.7.6.rgplugin
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+venv/
+
+# Debug output
+gis_debug_select.txt
+
+# Nav state
+.geocentroid_nav.json

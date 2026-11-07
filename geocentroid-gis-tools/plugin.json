@@ -1,0 +1,210 @@
+{
+  "id": "geocentroid-gis-tools",
+  "name": "GIS Tools",
+  "version": "1.7.6",
+  "description": "EPSG projection, layer merge, DXF/CSV/GeoPackage/SHP/KML export, save to original file, basemap loader, containment check, donut fix.",
+  "author": "Arun Prashad",
+  "homepage": "https://geocentroid.ai",
+  "license": "MIT",
+  "runtime": "process",
+  "python": {
+    "version": "3.12",
+    "requirements": "requirements.txt"
+  },
+  "run": {
+    "windows": ["python", "main.py"],
+    "default": ["python3", "main.py"]
+  },
+  "permissions": ["edit", "files", "network"],
+  "commands": [
+    {
+      "id": "set-projection",
+      "label": "Set\nProjection",
+      "help": "Assign an EPSG projection to all selected layers (or the active layer). Run with {\"epsg\": 27700} — e.g. 4326 WGS84, 27700 British National Grid, 28992 Dutch RD, 3857 Web Mercator.",
+      "icon": "zoom_full",
+      "params": "{\"epsg\": \"EPSG code number or EPSG:XXXX string\", \"layer\"?: \"layer name or id\"}"
+    },
+    {
+      "id": "load-basemap",
+      "label": "Load\nBasemap",
+      "help": "Add a web tile basemap. Run with {\"basemap\": \"<key>\"} where key is one of: google_satellite_cn, google_satellite, google_terrain, google_roads, google_hybrid, bing_aerial, bing_maps, osm, open_topo, esri_world_imagery.",
+      "icon": "tile",
+      "params": "{\"basemap\": \"basemap key — google_satellite | google_terrain | osm | esri_world_imagery | bing_aerial | …\"}"
+    },
+    {
+      "id": "merge-layers",
+      "label": "Merge All\nLayers",
+      "help": "Merge all loaded vector layers into one. Each feature gains a 'source_layer' attribute with the source layer name.",
+      "icon": "buffer",
+      "params": "{\"name\"?: \"output layer name (default: Merged)\"}"
+    },
+    {
+      "id": "export-dxf",
+      "label": "Export\nDXF",
+      "help": "Export selected (or all) vector layers to a DXF file. Run with {\"epsg\": 27700} to set the output projection. A save dialog will appear.",
+      "icon": "stats",
+      "params": "{\"epsg\"?: \"EPSG code for output coordinates\", \"path\"?: \"output .dxf file path\", \"label_field\"?: \"attribute to use as label\"}"
+    },
+    {
+      "id": "export-layer",
+      "label": "Export\nLayer",
+      "help": "Export the active layer to a new file. A save dialog lets you choose the format by extension: .gpkg (GeoPackage), .shp (Shapefile), .geojson, .kml, .kmz. Coordinates are saved as WGS84.",
+      "icon": "stats",
+      "params": "{\"layer\"?: \"layer name or id (default: active/selected)\", \"path\"?: \"output file path\"}"
+    },
+    {
+      "id": "save-original",
+      "label": "Save to\nOriginal",
+      "help": "Save the active layer back to its original file, retaining the original format. A save dialog opens pre-filled with the original filename — confirm or navigate to the file to overwrite.",
+      "icon": "stats",
+      "params": "{\"layer\"?: \"layer name or id (default: active/selected)\", \"path\"?: \"file path to overwrite\"}"
+    },
+    {
+      "id": "export-table",
+      "label": "Export\nTable",
+      "help": "Export the active layer's attribute table to a CSV file (opens in Excel). A save dialog will appear.",
+      "icon": "stats",
+      "params": "{\"layer\"?: \"layer name or id (default: active/selected)\", \"path\"?: \"output .csv file path\"}"
+    },
+    {
+      "id": "check-containment",
+      "label": "Check\nContainment",
+      "help": "Find polygons fully inside other polygons in the active layer. Creates a new layer with area_m2, net_area_m2, contained_in and contains_count attributes.",
+      "icon": "buffer",
+      "params": "{\"layer\"?: \"layer name or id (default: active/selected layer)\"}"
+    },
+    {
+      "id": "fix-donuts",
+      "label": "Fix\nDonuts",
+      "help": "Convert inner polygons to holes in their outer polygon. Creates a new layer with correct donut geometries so area measurements are accurate.",
+      "icon": "buffer",
+      "params": "{\"layer\"?: \"layer name or id (default: active/selected layer)\"}"
+    },
+    {
+      "id": "feature-next",
+      "label": "Next\nFeature",
+      "help": "Zoom to the next feature in the active layer. Cycles through all features one by one.",
+      "icon": "zoom_full",
+      "params": "{}"
+    },
+    {
+      "id": "feature-prev",
+      "label": "Prev\nFeature",
+      "help": "Zoom to the previous feature in the active layer.",
+      "icon": "zoom_full",
+      "params": "{}"
+    },
+    {
+      "id": "debug-select",
+      "label": "Debug\nSelect API",
+      "help": "Test all known selection API calls and log results. Run once to find the working API — check RustGIS console/log for results.",
+      "icon": "stats",
+      "params": "{}"
+    },
+    {
+      "id": "panel-state",
+      "label": "Refresh\nPanel",
+      "help": "Refresh the GIS Tools panel.",
+      "icon": "stats",
+      "params": "{}"
+    }
+  ],
+  "panel": {
+    "title": "GIS Tools",
+    "icon": "stats",
+    "help": "Run commands from the buttons below. For Set Projection and Load Basemap, use the Tools pane to supply the EPSG code or basemap key.",
+    "state": "panel-state",
+    "items": [
+      {
+        "kind": "text",
+        "id": "layer-info",
+        "label": "Active Layer",
+        "text": "Open a project to see layers."
+      },
+      {
+        "kind": "button",
+        "id": "apply-btn",
+        "command": "set-projection",
+        "label": "Set Projection  (Tools pane → epsg: 27700)"
+      },
+      {
+        "kind": "text",
+        "id": "proj-status",
+        "label": "Projection Status",
+        "text": ""
+      },
+      {
+        "kind": "button",
+        "id": "basemap-btn",
+        "command": "load-basemap",
+        "label": "Load Basemap  (Tools pane → basemap: osm)"
+      },
+      {
+        "kind": "button",
+        "id": "merge-btn",
+        "command": "merge-layers",
+        "label": "Merge All Layers"
+      },
+      {
+        "kind": "button",
+        "id": "dxf-btn",
+        "command": "export-dxf",
+        "label": "Export DXF  (Tools pane → epsg: 27700)"
+      },
+      {
+        "kind": "button",
+        "id": "export-layer-btn",
+        "command": "export-layer",
+        "label": "Export Layer  (GPKG / SHP / GeoJSON / KMZ)"
+      },
+      {
+        "kind": "button",
+        "id": "save-original-btn",
+        "command": "save-original",
+        "label": "Save to Original File"
+      },
+      {
+        "kind": "button",
+        "id": "table-btn",
+        "command": "export-table",
+        "label": "Export Table to CSV"
+      },
+      {
+        "kind": "button",
+        "id": "containment-btn",
+        "command": "check-containment",
+        "label": "Check Containment"
+      },
+      {
+        "kind": "button",
+        "id": "donut-btn",
+        "command": "fix-donuts",
+        "label": "Fix Donuts — Cut Holes in Outer Polygons"
+      },
+      {
+        "kind": "text",
+        "id": "action-status",
+        "label": "Status",
+        "text": ""
+      },
+      {
+        "kind": "button",
+        "id": "nav-prev-btn",
+        "command": "feature-prev",
+        "label": "◀  Previous Feature"
+      },
+      {
+        "kind": "button",
+        "id": "nav-next-btn",
+        "command": "feature-next",
+        "label": "▶  Next Feature"
+      },
+      {
+        "kind": "text",
+        "id": "nav-status",
+        "label": "Feature",
+        "text": ""
+      }
+    ]
+  }
+}
