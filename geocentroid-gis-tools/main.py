@@ -1396,6 +1396,192 @@ def handle_feature_prev(req):
     return _nav_step("prev")
 
 
+# ---------------------------------------------------------------------------
+# GML / CityGML loader
+# ---------------------------------------------------------------------------
+def _parse_gml_files(paths):
+    """
+    Parse one or more CityGML files.
+    Handles GenericCityObject elements (merge_gml.py style) and falls back
+    to plain gml:posList regex extraction.
+    Returns a list of GeoJSON Feature dicts (WGS84 coords preserved as-is).
+    """
+    import xml.etree.ElementTree as ET
+    import re as _re
+    from shapely.geometry import Polygon, mapping as shapely_mapping
+
+    feats = {}   # first-point-key -> dict
+
+    def _localname(tag):
+        return tag.split('}')[-1] if '}' in tag else tag
+
+    for path in paths:
+        fname = os.path.basename(path)
+        try:
+            tree = ET.parse(path)
+        except Exception as e:
+            _log(f"Failed to parse {fname}: {e}")
+            continue
+
+        root = tree.getroot()
+        found_generic = False
+
+        for elem in root.iter():
+            if _localname(elem.tag) != 'GenericCityObject':
+                continue
+            found_generic = True
+
+            attrs = {}
+            for child in elem:
+                ctag = _localname(child.tag)
+                if ctag.endswith('Attribute'):
+                    name = child.get('name', '')
+                    for sub in child:
+                        if _localname(sub.tag) == 'value' and sub.text:
+                            norm = _re.sub(r'\d+$', '', name).lower()
+                            attrs[norm] = sub.text.strip()
+                            break
+
+            pos_text = None
+            for sub in elem.iter():
+                if _localname(sub.tag) == 'posList' and sub.text:
+                    pos_text = sub.text
+                    break
+            if not pos_text:
+                continue
+
+            vals = list(map(float, pos_text.split()))
+            pts = [tuple(vals[i:i+3]) for i in range(0, len(vals), 3)]
+            if len(pts) < 3:
+                continue
+
+            k = tuple(round(c, 3) for c in pts[0])
+            d = feats.setdefault(k, {"pts": pts, "src": [], "attrs": {}})
+            d["src"].append(fname)
+            for norm, val in attrs.items():
+                if val and norm not in d["attrs"]:
+                    d["attrs"][norm] = val
+
+        if not found_generic:
+            # Fallback: regex extract all posList blocks
+            text = open(path, encoding="utf-8", errors="replace").read()
+            for m in _re.finditer(r'<[^>]*:?posList[^>]*>([^<]*)', text):
+                raw = m.group(1).strip()
+                vals = list(map(float, raw.split()))
+                pts = [tuple(vals[i:i+3]) for i in range(0, len(vals), 3)]
+                if len(pts) < 3:
+                    continue
+                k = tuple(round(c, 3) for c in pts[0])
+                d = feats.setdefault(k, {"pts": pts, "src": [], "attrs": {}})
+                d["src"].append(fname)
+
+    if not feats:
+        return []
+
+    # Sort largest polygon first (face_id=1 is the biggest face)
+    def _area(d):
+        try:
+            return Polygon([p[:2] for p in d["pts"]]).area
+        except Exception:
+            return 0.0
+
+    sorted_items = sorted(feats.values(), key=_area, reverse=True)
+
+    result = []
+    for i, d in enumerate(sorted_items, 1):
+        pts = d["pts"]
+        zs = [p[2] for p in pts]
+        z_avg = round(sum(zs) / len(zs), 3)
+        try:
+            poly = Polygon([p[:2] for p in pts])
+            if not poly.is_valid:
+                poly = poly.buffer(0)
+            if poly.is_empty:
+                continue
+        except Exception:
+            continue
+
+        props = dict(d["attrs"])
+        props["face_id"] = i
+        props["z"] = z_avg
+        props["sources"] = ",".join(d["src"])
+        result.append({"type": "Feature", "geometry": shapely_mapping(poly), "properties": props})
+
+    if result:
+        min_z = min(f["properties"]["z"] for f in result)
+        for f in result:
+            f["properties"]["height"] = round(f["properties"]["z"] - min_z, 3)
+
+    return result
+
+
+def handle_load_gml(req):
+    global _last_epsg
+    params = req.get("params") or {}
+
+    # 1 — pick GML files
+    import tkinter as tk
+    from tkinter import filedialog
+    root = tk.Tk(); root.withdraw(); root.attributes("-topmost", True)
+    paths = filedialog.askopenfilenames(
+        title="Select GML / CityGML file(s)",
+        filetypes=[("GML / XML", "*.gml *.xml"), ("All files", "*.*")],
+    )
+    root.destroy()
+    if not paths:
+        return {"panel": {"items": {"action-status": {"text": "Cancelled."}}}}
+
+    # 2 — ask EPSG (CityGML files rarely embed CRS)
+    epsg = params.get("epsg")
+    if not epsg:
+        chosen = _ask_combobox(
+            "GML Import — EPSG",
+            "Select the coordinate system of the GML data:",
+            _epsg_choices(),
+            initial=_last_epsg or "EPSG:32643",
+        )
+        if not chosen:
+            return {"panel": {"items": {"action-status": {"text": "Cancelled."}}}}
+        epsg = chosen.split("—")[0].strip().replace("EPSG:", "").strip() if "—" in chosen else chosen.strip()
+    _last_epsg = str(epsg).strip()
+
+    _notify(f"Parsing {len(paths)} GML file(s) …")
+
+    # 3 — parse + merge
+    features = _parse_gml_files(list(paths))
+    if not features:
+        _notify("No geometry features found in the selected GML file(s).", error=True)
+        return {"panel": {"items": {"action-status": {"text": "No features found."}}}}
+
+    # 4 — save GPKG
+    stem = os.path.splitext(os.path.basename(paths[0]))[0]
+    gpkg_path = _save_dialog(
+        "Save as GeoPackage",
+        stem,
+        [("GeoPackage", "*.gpkg"), ("All files", "*.*")],
+    )
+    if not gpkg_path:
+        return {"panel": {"items": {"action-status": {"text": "Cancelled."}}}}
+    if not gpkg_path.lower().endswith(".gpkg"):
+        gpkg_path += ".gpkg"
+
+    written, _ = _write_to_file(features, gpkg_path)
+
+    # 5 — load into RustGIS
+    layer_name = os.path.splitext(os.path.basename(gpkg_path))[0]
+    epsg_str = f"EPSG:{epsg}" if not str(epsg).upper().startswith("EPSG:") else str(epsg)
+    geojson_fc = {"type": "FeatureCollection", "features": features}
+    _call("host.addLayer", {"name": layer_name, "geojson": geojson_fc})
+    try:
+        _call("layer.defineProjection", {"layer": layer_name, "crs": epsg_str})
+    except Exception:
+        pass
+
+    msg = f"Loaded {written} features from {len(paths)} GML file(s) → {layer_name}"
+    _notify(msg)
+    return {"panel": {"items": {"action-status": {"text": msg}}}}
+
+
 def handle_debug_select(req):
     """Try every plausible selection API and report which ones work."""
     layers = _call("host.layers", {}) or []
@@ -1464,6 +1650,7 @@ HANDLERS = {
     "fix-donuts":        handle_fix_donuts,
     "feature-next":      handle_feature_next,
     "feature-prev":      handle_feature_prev,
+    "load-gml":          handle_load_gml,
     "debug-select":      handle_debug_select,
     "panel-state":       handle_panel_state,
 }
