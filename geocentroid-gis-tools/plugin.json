@@ -1,7 +1,7 @@
 {
   "id": "geocentroid-gis-tools",
   "name": "GIS Tools",
-  "version": "1.9.0",
+  "version": "1.9.1",
   "description": "EPSG projection, layer merge, DXF/CSV/GeoPackage/SHP/KML export, save to original file, basemap loader, containment check, donut fix, GML/IFC loader.",
   "author": "Arun Prashad",
   "homepage": "https://geocentroid.ai",
@@ -93,13 +93,6 @@
       "help": "Zoom to the previous feature in the active layer.",
       "icon": "zoom_full",
       "params": "{}"
-    },
-    {
-      "id": "load-gml",
-      "label": "Load\nGML",
-      "help": "Select one or more CityGML (.gml) files, merge them, save as GeoPackage and load into RustGIS. Handles GenericCityObject elements and plain posList geometry. Deduplicates by geometry and merges attributes.",
-      "icon": "stats",
-      "params": "{\"epsg\"?: \"EPSG code for the GML data (default: prompted)\"}"
     },
     {
       "id": "load-ifc",
@@ -200,12 +193,6 @@
         "id": "action-status",
         "label": "Status",
         "text": ""
-      },
-      {
-        "kind": "button",
-        "id": "load-gml-btn",
-        "command": "load-gml",
-        "label": "Load GML / CityGML"
       },
       {
         "kind": "button",
