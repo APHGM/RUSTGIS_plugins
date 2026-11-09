@@ -1,8 +1,8 @@
 {
   "id": "geocentroid-gis-tools",
   "name": "GIS Tools",
-  "version": "1.8.0",
-  "description": "EPSG projection, layer merge, DXF/CSV/GeoPackage/SHP/KML export, save to original file, basemap loader, containment check, donut fix.",
+  "version": "1.9.0",
+  "description": "EPSG projection, layer merge, DXF/CSV/GeoPackage/SHP/KML export, save to original file, basemap loader, containment check, donut fix, GML/IFC loader.",
   "author": "Arun Prashad",
   "homepage": "https://geocentroid.ai",
   "license": "MIT",
@@ -102,6 +102,13 @@
       "params": "{\"epsg\"?: \"EPSG code for the GML data (default: prompted)\"}"
     },
     {
+      "id": "load-ifc",
+      "label": "Load\nIFC",
+      "help": "Select an IFC file, extract building footprints (LOD1), dissolve by building, save as GeoPackage and load into RustGIS. Use height_m for 2.5D extrusion.",
+      "icon": "stats",
+      "params": "{\"epsg\"?: \"EPSG code for the IFC data (IFC has no CRS — default: prompted, e.g. 32643)\"}"
+    },
+    {
       "id": "debug-select",
       "label": "Debug\nSelect API",
       "help": "Test all known selection API calls and log results. Run once to find the working API — check RustGIS console/log for results.",
@@ -199,6 +206,12 @@
         "id": "load-gml-btn",
         "command": "load-gml",
         "label": "Load GML / CityGML"
+      },
+      {
+        "kind": "button",
+        "id": "load-ifc-btn",
+        "command": "load-ifc",
+        "label": "Load IFC  (buildings_lod1)"
       },
       {
         "kind": "button",

@@ -1,6 +1,6 @@
 # Keep only the latest packaged plugin; ignore all older versions
 geocentroid-gis-tools-*.rgplugin
-!geocentroid-gis-tools-1.8.0.rgplugin
+!geocentroid-gis-tools-1.9.0.rgplugin
 
 # Python
 __pycache__/

@@ -924,7 +924,7 @@ def _write_kml(features, kml_path, layer_name="export"):
     return written
 
 
-def _write_to_file(features, path):
+def _write_to_file(features, path, layer_name=None):
     """
     Write GeoJSON features to path.
     Format detected from extension: .shp .gpkg .geojson .json .kml .kmz
@@ -933,7 +933,8 @@ def _write_to_file(features, path):
     import zipfile
 
     ext = os.path.splitext(path)[1].lower()
-    layer_name = os.path.splitext(os.path.basename(path))[0]
+    if not layer_name:
+        layer_name = os.path.splitext(os.path.basename(path))[0]
 
     # KML/KMZ handled without fiona (more reliable)
     if ext in (".kml", ".kmz"):
@@ -1582,6 +1583,174 @@ def handle_load_gml(req):
     return {"panel": {"items": {"action-status": {"text": msg}}}}
 
 
+def _extract_ifc_footprints(ifc_path):
+    """
+    Extract building footprints from an IFC file using ifcopenshell.geom.
+    Returns list of GeoJSON Feature dicts with height_m, height_ft, floors,
+    base_z, top_z, elements, area_m2.  Dissolves by building.
+    """
+    import multiprocessing
+    import numpy as np
+    import ifcopenshell
+    import ifcopenshell.geom as ifc_geom
+    from shapely.geometry import Polygon, mapping as shapely_mapping
+    from shapely.ops import unary_union
+
+    FLOOR_M = 9.0 * 0.3048  # 9 ft per floor
+
+    f = ifcopenshell.open(ifc_path)
+    s = ifc_geom.settings()
+    s.set("use-world-coords", True)
+    it = ifc_geom.iterator(s, f, multiprocessing.cpu_count())
+
+    rows = []
+    bad = 0
+    if it.initialize():
+        while True:
+            sh = it.get()
+            v = np.array(sh.geometry.verts).reshape(-1, 3)
+            t = np.array(sh.geometry.faces).reshape(-1, 3)
+            try:
+                tris = [Polygon(v[i][:, :2]) for i in t]
+                tris = [p.buffer(0) for p in tris if p.area > 1e-9]
+                fp = unary_union(tris).buffer(0.001).buffer(-0.001) if tris else None
+            except Exception:
+                fp = None
+            if fp is None or fp.is_empty:
+                bad += 1
+            else:
+                e = f.by_id(sh.id)
+                zmin = float(v[:, 2].min())
+                zmax = float(v[:, 2].max())
+                rows.append({
+                    "geometry": fp,
+                    "base_z": round(zmin, 3),
+                    "top_z": round(zmax, 3),
+                    "height_m": round(zmax - zmin, 3),
+                    "name": getattr(e, "Name", None) or "",
+                    "ifc_guid": getattr(e, "GlobalId", None) or "",
+                })
+            if not it.next():
+                break
+
+    if not rows:
+        return [], 0, bad
+
+    # Dissolve overlapping footprints into building groups
+    polys = [r["geometry"] for r in rows]
+    all_union = unary_union(polys)
+    geom_list = list(all_union.geoms) if all_union.geom_type == "MultiPolygon" else [all_union]
+
+    features = []
+    for i, bldg_poly in enumerate(geom_list, 1):
+        members = [r for r in rows if bldg_poly.intersects(r["geometry"])]
+        if not members:
+            continue
+        h_max = max(r["height_m"] for r in members)
+        base = min(r["base_z"] for r in members)
+        top = max(r["top_z"] for r in members)
+        area = round(bldg_poly.area, 2)
+        floors = max(1, round(h_max / FLOOR_M))
+        props = {
+            "face_id": i,
+            "height_m": round(h_max, 3),
+            "height_ft": round(h_max / 0.3048, 2),
+            "floors": floors,
+            "base_z": round(base, 3),
+            "top_z": round(top, 3),
+            "elements": len(members),
+            "area_m2": area,
+        }
+        try:
+            geom = shapely_mapping(bldg_poly)
+        except Exception:
+            continue
+        features.append({
+            "type": "Feature",
+            "geometry": geom,
+            "properties": props,
+        })
+
+    # Sort by area descending, renumber
+    features.sort(key=lambda f: -(f["properties"]["area_m2"] or 0))
+    for idx, feat in enumerate(features, 1):
+        feat["properties"]["face_id"] = idx
+
+    return features, len(rows), bad
+
+
+def handle_load_ifc(req):
+    global _last_epsg
+    params = req.get("params") or {}
+
+    # 1 — pick IFC file
+    import tkinter as tk
+    from tkinter import filedialog
+    root = tk.Tk(); root.withdraw(); root.attributes("-topmost", True)
+    path = filedialog.askopenfilename(
+        title="Select IFC file",
+        filetypes=[("IFC files", "*.ifc"), ("All files", "*.*")],
+    )
+    root.destroy()
+    if not path:
+        return {"panel": {"items": {"action-status": {"text": "Cancelled."}}}}
+
+    # 2 — ask EPSG (IFC has no CRS)
+    epsg = params.get("epsg")
+    if not epsg:
+        chosen = _ask_combobox(
+            "IFC Import — EPSG",
+            "IFC has no embedded CRS. Select the coordinate system:",
+            _epsg_choices(),
+            initial=_last_epsg or "EPSG:32643",
+        )
+        if not chosen:
+            return {"panel": {"items": {"action-status": {"text": "Cancelled."}}}}
+        epsg = chosen.split("—")[0].strip().replace("EPSG:", "").strip() if "—" in chosen else chosen.strip()
+    _last_epsg = str(epsg).strip()
+
+    _notify(f"Processing IFC: {os.path.basename(path)} …")
+
+    # 3 — extract footprints
+    try:
+        features, total_elements, bad = _extract_ifc_footprints(path)
+    except Exception as exc:
+        _notify(f"IFC extraction failed: {exc}", error=True)
+        return {"panel": {"items": {"action-status": {"text": f"Error: {exc}"}}}}
+
+    if not features:
+        _notify("No geometry found in IFC file.", error=True)
+        return {"panel": {"items": {"action-status": {"text": "No geometry found."}}}}
+
+    # 4 — save GPKG
+    stem = os.path.splitext(os.path.basename(path))[0]
+    gpkg_path = _save_dialog(
+        "Save as GeoPackage",
+        stem + "_buildings",
+        [("GeoPackage", "*.gpkg"), ("All files", "*.*")],
+    )
+    if not gpkg_path:
+        return {"panel": {"items": {"action-status": {"text": "Cancelled."}}}}
+    if not gpkg_path.lower().endswith(".gpkg"):
+        gpkg_path += ".gpkg"
+
+    written, _ = _write_to_file(features, gpkg_path, layer_name="buildings_lod1")
+
+    # 5 — load into RustGIS
+    layer_name = os.path.splitext(os.path.basename(gpkg_path))[0]
+    epsg_str = f"EPSG:{epsg}" if not str(epsg).upper().startswith("EPSG:") else str(epsg)
+    geojson_fc = {"type": "FeatureCollection", "features": features}
+    _call("host.addLayer", {"name": layer_name, "geojson": geojson_fc})
+    try:
+        _call("layer.defineProjection", {"layer": layer_name, "crs": epsg_str})
+    except Exception:
+        pass
+
+    msg = f"Loaded {written} buildings ({total_elements} IFC elements) → {layer_name}"
+    _notify(msg)
+    return {"panel": {"items": {"action-status": {"text": msg}}}}
+
+
 def handle_debug_select(req):
     """Try every plausible selection API and report which ones work."""
     layers = _call("host.layers", {}) or []
@@ -1651,6 +1820,7 @@ HANDLERS = {
     "feature-next":      handle_feature_next,
     "feature-prev":      handle_feature_prev,
     "load-gml":          handle_load_gml,
+    "load-ifc":          handle_load_ifc,
     "debug-select":      handle_debug_select,
     "panel-state":       handle_panel_state,
 }
