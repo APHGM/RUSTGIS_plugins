@@ -1669,16 +1669,20 @@ def _coords_are_geographic(features):
     return True  # default assume geographic
 
 
-def _ask_buffer_dialog(layer_names, default_layer, numeric_cols):
-    """Show Buffer Points dialog. Returns dict or None if cancelled."""
+def _ask_buffer_dialog(layer_names, default_layer, numeric_cols, feature_names=None):
+    """Show Buffer Points dialog. Returns dict or None if cancelled.
+
+    feature_names: list of display names for each feature (for per-feature table).
+    """
     import tkinter as tk
     from tkinter import ttk, messagebox
 
     result = {"ok": False}
+    feature_names = feature_names or []
 
     root = tk.Tk()
     root.title("Buffer Points by Area")
-    root.resizable(False, False)
+    root.resizable(True, False)
     root.attributes("-topmost", True)
 
     tk.Label(root, text="Buffer Points by Area", font=("Segoe UI", 11, "bold")).pack(padx=16, pady=(14, 2))
@@ -1693,7 +1697,7 @@ def _ask_buffer_dialog(layer_names, default_layer, numeric_cols):
                  width=30, font=("Segoe UI", 9)).pack(side="left")
 
     # Mode radio
-    mode_var = tk.StringVar(value="fixed")
+    mode_var = tk.StringVar(value="per_feature" if feature_names else "fixed")
     tk.Label(root, text="Buffer size:", font=("Segoe UI", 9, "bold"), anchor="w").pack(
         padx=16, pady=(10, 2), fill="x")
 
@@ -1718,6 +1722,39 @@ def _ask_buffer_dialog(layer_names, default_layer, numeric_cols):
     ttk.Combobox(f2, textvariable=col_unit_var, values=list(_AREA_UNITS.keys()),
                  state="readonly", width=10, font=("Segoe UI", 9)).pack(side="left")
 
+    # Per-feature table row
+    f_pf_radio = tk.Frame(root); f_pf_radio.pack(padx=28, pady=(2, 0), fill="x")
+    pf_unit_var = tk.StringVar(value="sq km")
+    tk.Radiobutton(f_pf_radio, text="Enter per-feature areas:", variable=mode_var,
+                   value="per_feature", font=("Segoe UI", 9)).pack(side="left")
+    ttk.Combobox(f_pf_radio, textvariable=pf_unit_var, values=list(_AREA_UNITS.keys()),
+                 state="readonly", width=10, font=("Segoe UI", 9)).pack(side="left", padx=(4, 0))
+
+    # Table of feature rows (name + editable area entry)
+    f_table = tk.Frame(root, relief="sunken", bd=1)
+    f_table.pack(padx=40, pady=(4, 0), fill="x")
+
+    # Header
+    hdr = tk.Frame(f_table, bg="#e0e0e0")
+    hdr.pack(fill="x")
+    tk.Label(hdr, text="Feature", width=24, anchor="w", font=("Segoe UI", 8, "bold"),
+             bg="#e0e0e0").pack(side="left", padx=(4, 0))
+    tk.Label(hdr, text="Area", width=10, anchor="w", font=("Segoe UI", 8, "bold"),
+             bg="#e0e0e0").pack(side="left")
+
+    pf_entries = []  # list of StringVar, one per feature
+    for name in feature_names:
+        row = tk.Frame(f_table)
+        row.pack(fill="x")
+        tk.Label(row, text=str(name)[:30], width=24, anchor="w",
+                 font=("Segoe UI", 9)).pack(side="left", padx=(4, 0))
+        var = tk.StringVar(value="")
+        tk.Entry(row, textvariable=var, width=10, font=("Segoe UI", 9)).pack(side="left", padx=(0, 4))
+        pf_entries.append(var)
+
+    if not feature_names:
+        tk.Label(f_table, text="(load a layer first)", font=("Segoe UI", 8), fg="#888").pack(pady=2)
+
     # Output name
     f3 = tk.Frame(root); f3.pack(padx=16, pady=(10, 4), fill="x")
     tk.Label(f3, text="Output layer name:", width=18, anchor="w", font=("Segoe UI", 9)).pack(side="left")
@@ -1728,23 +1765,50 @@ def _ask_buffer_dialog(layer_names, default_layer, numeric_cols):
     fb = tk.Frame(root); fb.pack(padx=16, pady=12, fill="x")
 
     def on_ok():
+        mode = mode_var.get()
         try:
-            if mode_var.get() == "fixed":
+            if mode == "fixed":
                 float(fixed_var.get())
-            elif not col_var.get():
-                messagebox.showerror("No column", "Select an attribute column.", parent=root)
-                return
+            elif mode == "column":
+                if not col_var.get():
+                    messagebox.showerror("No column", "Select an attribute column.", parent=root)
+                    return
+            elif mode == "per_feature":
+                if not pf_entries:
+                    messagebox.showerror("No features", "No features to edit.", parent=root)
+                    return
+                for i, var in enumerate(pf_entries):
+                    v = var.get().strip()
+                    if not v:
+                        messagebox.showerror(
+                            "Missing value",
+                            f"Enter an area value for '{feature_names[i]}'.",
+                            parent=root,
+                        )
+                        return
+                    try:
+                        float(v)
+                    except ValueError:
+                        messagebox.showerror(
+                            "Invalid value",
+                            f"'{v}' is not a number for '{feature_names[i]}'.",
+                            parent=root,
+                        )
+                        return
         except ValueError:
             messagebox.showerror("Invalid", "Enter a valid number for area.", parent=root)
             return
+
         result.update({
             "ok": True,
             "layer": layer_var.get(),
-            "mode": mode_var.get(),
+            "mode": mode,
             "fixed_area": fixed_var.get(),
             "fixed_unit": fixed_unit_var.get(),
             "col": col_var.get(),
             "col_unit": col_unit_var.get(),
+            "pf_areas": [v.get().strip() for v in pf_entries],
+            "pf_unit": pf_unit_var.get(),
             "out_name": out_var.get().strip() or "buffer",
         })
         root.destroy()
@@ -1782,52 +1846,64 @@ def handle_buffer_points(req):
     # Detect active layer for default
     active = next((l["name"] for l in layers_info if not l.get("raster") and l.get("active")), point_layers[0])
 
-    # Fetch features of active layer to discover numeric columns
+    # Fetch features of active layer to discover numeric columns and feature names
     raw = _call("host.features", {"layer": active}) or {}
-    sample_features = (raw.get("features", []) if isinstance(raw, dict) else [])[:10]
+    sample_features = raw.get("features", []) if isinstance(raw, dict) else []
     numeric_cols = []
+    feature_names = []
     if sample_features:
-        props = sample_features[0].get("properties") or {}
-        for k, v in props.items():
+        props0 = sample_features[0].get("properties") or {}
+        for k, v in props0.items():
             try:
                 float(str(v).replace(",", "").strip())
                 numeric_cols.append(k)
             except (ValueError, TypeError):
                 pass
+        # Build display names: prefer "name" / "label" / "id" column, else "Point N"
+        name_key = next((k for k in props0 if k.lower() in ("name", "label", "id", "site")), None)
+        for i, f in enumerate(sample_features, 1):
+            p = f.get("properties") or {}
+            feature_names.append(str(p.get(name_key, f"Point {i}")) if name_key else f"Point {i}")
 
     # 2 — show dialog
-    cfg = _ask_buffer_dialog(point_layers, active, numeric_cols)
+    cfg = _ask_buffer_dialog(point_layers, active, numeric_cols, feature_names)
     if cfg is None:
         return {"panel": {"items": {"action-status": {"text": "Cancelled."}}}}
 
     layer_name = cfg["layer"]
 
-    # 3 — fetch all features of chosen layer
-    raw = _call("host.features", {"layer": layer_name}) or {}
+    # 3 — fetch all features of chosen layer (re-fetch if layer changed)
+    if layer_name != active:
+        raw = _call("host.features", {"layer": layer_name}) or {}
     features_in = raw.get("features", []) if isinstance(raw, dict) else []
     if not features_in:
         _notify("Layer has no features.", error=True)
         return {"panel": {"items": {"action-status": {"text": "No features."}}}}
 
     is_geo = _coords_are_geographic(features_in)
-    unit_key = cfg["fixed_unit"] if cfg["mode"] == "fixed" else cfg["col_unit"]
-    unit_factor = _AREA_UNITS.get(unit_key, 1.0)
+
+    # unit factor depends on mode
+    if cfg["mode"] == "fixed":
+        unit_factor = _AREA_UNITS.get(cfg["fixed_unit"], 1.0)
+    elif cfg["mode"] == "column":
+        unit_factor = _AREA_UNITS.get(cfg["col_unit"], 1.0)
+    else:  # per_feature
+        unit_factor = _AREA_UNITS.get(cfg["pf_unit"], 1.0)
 
     # 4 — build buffer polygons
     out_features = []
     skipped = 0
-    for feat in features_in:
+    for idx, feat in enumerate(features_in):
         geom = feat.get("geometry") or {}
         props = dict(feat.get("properties") or {})
         coords = geom.get("coordinates")
         if not coords:
             skipped += 1; continue
 
-        # Support Point only; skip non-point geometries
         gtype = geom.get("type", "")
         if gtype == "Point":
             lon, lat = coords[0], coords[1]
-        elif gtype in ("MultiPoint",):
+        elif gtype == "MultiPoint":
             lon, lat = coords[0][0], coords[0][1]
         else:
             skipped += 1; continue
@@ -1838,10 +1914,18 @@ def handle_buffer_points(req):
                 area_m2 = float(cfg["fixed_area"]) * unit_factor
             except ValueError:
                 skipped += 1; continue
-        else:
+        elif cfg["mode"] == "column":
             raw_val = props.get(cfg["col"], None)
             try:
                 area_m2 = float(str(raw_val).replace(",", "").strip()) * unit_factor
+            except (ValueError, TypeError):
+                skipped += 1; continue
+        else:  # per_feature
+            pf_areas = cfg.get("pf_areas", [])
+            if idx >= len(pf_areas):
+                skipped += 1; continue
+            try:
+                area_m2 = float(pf_areas[idx]) * unit_factor
             except (ValueError, TypeError):
                 skipped += 1; continue
 
