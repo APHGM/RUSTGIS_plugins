@@ -1,8 +1,8 @@
 {
   "id": "geocentroid-gis-tools",
   "name": "GIS Tools",
-  "version": "1.9.2",
-  "description": "EPSG projection, layer merge, DXF/CSV/GeoPackage/SHP/KML export, save to original file, basemap loader, containment check, donut fix, IFC loader, add points from manual entry or CSV.",
+  "version": "1.9.3",
+  "description": "EPSG projection, layer merge, DXF/CSV/GeoPackage/SHP/KML export, save to original file, basemap loader, containment check, donut fix, IFC loader, add points, buffer points by area.",
   "author": "Arun Prashad",
   "homepage": "https://geocentroid.ai",
   "license": "MIT",
@@ -100,6 +100,13 @@
       "help": "Select an IFC file, extract building footprints (LOD1), dissolve by building, save as GeoPackage and load into RustGIS. Use height_m for 2.5D extrusion.",
       "icon": "stats",
       "params": "{\"epsg\"?: \"EPSG code for the IFC data (IFC has no CRS — default: prompted, e.g. 32643)\"}"
+    },
+    {
+      "id": "buffer-points",
+      "label": "Buffer\nPoints",
+      "help": "Create circular polygon buffers around points sized to a target area. Choose fixed area for all points (e.g. 4 sq km) or read the area from an attribute column. Units: sq km, sq m, hectares, acres. Radius = √(area/π). Saves as GeoPackage and loads into RustGIS.",
+      "icon": "buffer",
+      "params": "{}"
     },
     {
       "id": "add-points",
@@ -206,6 +213,12 @@
         "id": "load-ifc-btn",
         "command": "load-ifc",
         "label": "Load IFC  (buildings_lod1)"
+      },
+      {
+        "kind": "button",
+        "id": "buffer-points-btn",
+        "command": "buffer-points",
+        "label": "Buffer Points by Area"
       },
       {
         "kind": "button",
