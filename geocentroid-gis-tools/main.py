@@ -1621,6 +1621,290 @@ def handle_debug_select(req):
 
 
 # ---------------------------------------------------------------------------
+# Add Points
+# ---------------------------------------------------------------------------
+
+def _ask_add_points_dialog():
+    """Show a dialog: choose Manual entry OR CSV file.
+    Returns (mode, data) where:
+      mode="manual"  → data = list of raw text lines from the text box
+      mode="csv"     → data = (path:str, rows:list[dict])
+      mode=None      → cancelled
+    """
+    import tkinter as tk
+    from tkinter import ttk, filedialog, messagebox
+
+    result = {"mode": None, "lines": [], "csv_path": "", "csv_rows": []}
+
+    root = tk.Tk()
+    root.title("Add Points")
+    root.resizable(False, False)
+    root.attributes("-topmost", True)
+
+    # --- header ---
+    tk.Label(root, text="Add Points", font=("Segoe UI", 11, "bold")).pack(padx=16, pady=(14, 2))
+    tk.Label(
+        root,
+        text="Paste lat/lon pairs  OR  load a CSV file.\n"
+             "Manual format (one per line):  name, lat, lon  or  lat, lon",
+        font=("Segoe UI", 9), justify="left", fg="#444",
+    ).pack(padx=16, pady=(0, 8), anchor="w")
+
+    # --- text area ---
+    frame_txt = tk.LabelFrame(root, text="Manual entry", font=("Segoe UI", 9))
+    frame_txt.pack(padx=16, fill="x")
+    txt = tk.Text(frame_txt, width=52, height=10, font=("Consolas", 9))
+    txt.pack(padx=6, pady=6)
+    txt.insert("1.0", "# name, latitude, longitude\n# e.g.:\nSample 1, 12.84708054, 77.67642019\nSample 2, 12.84990186, 77.66265996\n")
+
+    # --- csv row ---
+    frame_csv = tk.Frame(root)
+    frame_csv.pack(padx=16, pady=(8, 0), fill="x")
+    csv_var = tk.StringVar(value="")
+    tk.Label(frame_csv, text="CSV file:", font=("Segoe UI", 9)).pack(side="left")
+    csv_entry = tk.Entry(frame_csv, textvariable=csv_var, width=36, state="readonly",
+                         font=("Segoe UI", 9), readonlybackground="#f0f0f0")
+    csv_entry.pack(side="left", padx=(4, 4))
+
+    def browse_csv():
+        p = filedialog.askopenfilename(
+            title="Select CSV file",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+            parent=root,
+        )
+        if p:
+            csv_var.set(p)
+
+    tk.Button(frame_csv, text="Browse…", font=("Segoe UI", 9), command=browse_csv).pack(side="left")
+
+    # --- buttons ---
+    frame_btn = tk.Frame(root)
+    frame_btn.pack(padx=16, pady=12, fill="x")
+
+    def on_ok():
+        csv_path = csv_var.get().strip()
+        if csv_path:
+            # CSV mode: parse and return rows
+            import csv as _csv
+            try:
+                with open(csv_path, newline="", encoding="utf-8-sig") as fh:
+                    reader = _csv.DictReader(fh)
+                    rows = [dict(r) for r in reader]
+                if not rows:
+                    messagebox.showerror("Empty CSV", "The CSV file has no data rows.", parent=root)
+                    return
+            except Exception as e:
+                messagebox.showerror("CSV Error", str(e), parent=root)
+                return
+            result["mode"] = "csv"
+            result["csv_path"] = csv_path
+            result["csv_rows"] = rows
+        else:
+            # Manual mode
+            raw_lines = [l for l in txt.get("1.0", "end").splitlines()
+                         if l.strip() and not l.strip().startswith("#")]
+            if not raw_lines:
+                messagebox.showerror("No data", "Enter at least one coordinate line.", parent=root)
+                return
+            result["mode"] = "manual"
+            result["lines"] = raw_lines
+        root.destroy()
+
+    def on_cancel():
+        root.destroy()
+
+    tk.Button(frame_btn, text="OK", width=10, font=("Segoe UI", 9),
+              command=on_ok, default="active").pack(side="right", padx=(4, 0))
+    tk.Button(frame_btn, text="Cancel", width=10, font=("Segoe UI", 9),
+              command=on_cancel).pack(side="right")
+
+    root.bind("<Return>", lambda e: on_ok())
+    root.bind("<Escape>", lambda e: on_cancel())
+    root.update_idletasks()
+    w, h = root.winfo_reqwidth(), root.winfo_reqheight()
+    sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+    root.geometry(f"{w}x{h}+{(sw-w)//2}+{(sh-h)//2}")
+    root.mainloop()
+
+    return result["mode"], result
+
+
+def _detect_latlon_cols(headers):
+    """Return (lat_col, lon_col) from a list of CSV header names, or (None, None)."""
+    lat_keys = {"lat", "latitude", "y", "northing", "ylat"}
+    lon_keys = {"lon", "lng", "longitude", "x", "easting", "xlon", "xlong"}
+    lat_col = next((h for h in headers if h.strip().lower() in lat_keys), None)
+    lon_col = next((h for h in headers if h.strip().lower() in lon_keys), None)
+    return lat_col, lon_col
+
+
+def _ask_col_picker(headers, title="Select columns"):
+    """Show two comboboxes to let user pick lat/lon column names. Returns (lat_col, lon_col) or (None,None)."""
+    import tkinter as tk
+    from tkinter import ttk
+    picked = {"lat": None, "lon": None}
+
+    root = tk.Tk()
+    root.title(title)
+    root.attributes("-topmost", True)
+    root.resizable(False, False)
+
+    tk.Label(root, text="Could not auto-detect lat/lon columns.\nPlease select them:",
+             font=("Segoe UI", 9), justify="left").pack(padx=16, pady=(12, 6), anchor="w")
+
+    for label, key in [("Latitude column:", "lat"), ("Longitude column:", "lon")]:
+        f = tk.Frame(root)
+        f.pack(padx=16, pady=3, fill="x")
+        tk.Label(f, text=label, width=20, anchor="w", font=("Segoe UI", 9)).pack(side="left")
+        cb = ttk.Combobox(f, values=headers, state="readonly", width=24, font=("Segoe UI", 9))
+        cb.pack(side="left")
+        if key == "lat":
+            lat_cb = cb
+        else:
+            lon_cb = cb
+
+    frame_btn = tk.Frame(root)
+    frame_btn.pack(padx=16, pady=10, fill="x")
+
+    def on_ok():
+        picked["lat"] = lat_cb.get() or None
+        picked["lon"] = lon_cb.get() or None
+        root.destroy()
+
+    def on_cancel():
+        root.destroy()
+
+    tk.Button(frame_btn, text="OK", width=10, font=("Segoe UI", 9),
+              command=on_ok, default="active").pack(side="right", padx=(4, 0))
+    tk.Button(frame_btn, text="Cancel", width=10, font=("Segoe UI", 9),
+              command=on_cancel).pack(side="right")
+
+    root.bind("<Return>", lambda e: on_ok())
+    root.bind("<Escape>", lambda e: on_cancel())
+    root.update_idletasks()
+    w, h = root.winfo_reqwidth(), root.winfo_reqheight()
+    sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+    root.geometry(f"{w}x{h}+{(sw-w)//2}+{(sh-h)//2}")
+    root.mainloop()
+
+    return picked["lat"], picked["lon"]
+
+
+def handle_add_points(req):
+    global _last_epsg
+    params = req.get("params") or {}
+
+    # 1 — dialog: manual or CSV
+    mode, data = _ask_add_points_dialog()
+    if mode is None:
+        return {"panel": {"items": {"action-status": {"text": "Cancelled."}}}}
+
+    # 2 — build raw (name, lat, lon, extra_props) list
+    raw_points = []  # list of {"name":str, "lat":float, "lon":float, **extra}
+
+    if mode == "manual":
+        for i, line in enumerate(data["lines"], 1):
+            parts = [p.strip() for p in line.split(",")]
+            try:
+                if len(parts) >= 3:
+                    name = parts[0]
+                    lat, lon = float(parts[1]), float(parts[2])
+                elif len(parts) == 2:
+                    name = f"Point {i}"
+                    lat, lon = float(parts[0]), float(parts[1])
+                else:
+                    _log(f"Skipping line (too few fields): {line}")
+                    continue
+            except ValueError:
+                # first token might be non-numeric but rest fail too
+                _log(f"Skipping unparseable line: {line}")
+                continue
+            raw_points.append({"name": name, "lat": lat, "lon": lon})
+
+    else:  # csv
+        rows = data["csv_rows"]
+        headers = list(rows[0].keys()) if rows else []
+        lat_col, lon_col = _detect_latlon_cols(headers)
+        if not lat_col or not lon_col:
+            lat_col, lon_col = _ask_col_picker(headers, "CSV Column Mapping")
+        if not lat_col or not lon_col:
+            return {"panel": {"items": {"action-status": {"text": "Cancelled."}}}}
+
+        # name column heuristic
+        name_keys = {"name", "label", "id", "site", "point", "description", "desc"}
+        name_col = next((h for h in headers
+                         if h.strip().lower() in name_keys and h not in (lat_col, lon_col)), None)
+
+        for i, row in enumerate(rows, 1):
+            try:
+                lat = float(row[lat_col])
+                lon = float(row[lon_col])
+            except (ValueError, KeyError):
+                _log(f"Skipping CSV row {i}: bad lat/lon")
+                continue
+            name = row.get(name_col, f"Point {i}") if name_col else f"Point {i}"
+            extra = {k: v for k, v in row.items() if k not in (lat_col, lon_col)}
+            raw_points.append({"name": name, "lat": lat, "lon": lon, **extra})
+
+    if not raw_points:
+        _notify("No valid coordinate rows found.", error=True)
+        return {"panel": {"items": {"action-status": {"text": "No valid points."}}}}
+
+    # 3 — EPSG for the input coordinates (default WGS84)
+    epsg = params.get("epsg")
+    if not epsg:
+        chosen = _ask_combobox(
+            "Add Points — Input CRS",
+            "Select the coordinate system of the input coordinates:",
+            _epsg_choices(),
+            initial=_last_epsg or "EPSG:4326 — WGS 84",
+        )
+        if not chosen:
+            return {"panel": {"items": {"action-status": {"text": "Cancelled."}}}}
+        epsg = chosen.split("—")[0].strip().replace("EPSG:", "").strip() if "—" in chosen else chosen.strip()
+    _last_epsg = str(epsg).strip()
+    epsg_str = f"EPSG:{epsg}" if not str(epsg).upper().startswith("EPSG:") else str(epsg)
+
+    # 4 — build GeoJSON features (lon=X, lat=Y for WGS84 and most projected)
+    features = []
+    for i, pt in enumerate(raw_points, 1):
+        props = {k: v for k, v in pt.items() if k not in ("lat", "lon")}
+        props["point_id"] = i
+        props.setdefault("name", f"Point {i}")
+        # lon, lat order for GeoJSON
+        geom = {"type": "Point", "coordinates": [pt["lon"], pt["lat"]]}
+        features.append({"type": "Feature", "geometry": geom, "properties": props})
+
+    # 5 — save GPKG
+    default_name = (os.path.splitext(os.path.basename(data.get("csv_path", "")))[0]
+                    if mode == "csv" and data.get("csv_path") else "points")
+    gpkg_path = _save_dialog(
+        "Save points as GeoPackage",
+        default_name,
+        [("GeoPackage", "*.gpkg"), ("All files", "*.*")],
+    )
+    if not gpkg_path:
+        return {"panel": {"items": {"action-status": {"text": "Cancelled."}}}}
+    if not gpkg_path.lower().endswith(".gpkg"):
+        gpkg_path += ".gpkg"
+
+    written, _ = _write_to_file(features, gpkg_path)
+
+    # 6 — load into RustGIS
+    layer_name = os.path.splitext(os.path.basename(gpkg_path))[0]
+    geojson_fc = {"type": "FeatureCollection", "features": features}
+    _call("host.addLayer", {"name": layer_name, "geojson": geojson_fc})
+    try:
+        _call("layer.defineProjection", {"layer": layer_name, "crs": epsg_str})
+    except Exception:
+        pass
+
+    msg = f"Added {written} points → {layer_name}"
+    _notify(msg)
+    return {"panel": {"items": {"action-status": {"text": msg}}}}
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 HANDLERS = {
@@ -1636,6 +1920,7 @@ HANDLERS = {
     "feature-next":      handle_feature_next,
     "feature-prev":      handle_feature_prev,
     "load-ifc":          handle_load_ifc,
+    "add-points":        handle_add_points,
     "debug-select":      handle_debug_select,
     "panel-state":       handle_panel_state,
 }

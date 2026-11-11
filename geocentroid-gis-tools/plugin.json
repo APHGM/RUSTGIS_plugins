@@ -1,8 +1,8 @@
 {
   "id": "geocentroid-gis-tools",
   "name": "GIS Tools",
-  "version": "1.9.1",
-  "description": "EPSG projection, layer merge, DXF/CSV/GeoPackage/SHP/KML export, save to original file, basemap loader, containment check, donut fix, GML/IFC loader.",
+  "version": "1.9.2",
+  "description": "EPSG projection, layer merge, DXF/CSV/GeoPackage/SHP/KML export, save to original file, basemap loader, containment check, donut fix, IFC loader, add points from manual entry or CSV.",
   "author": "Arun Prashad",
   "homepage": "https://geocentroid.ai",
   "license": "MIT",
@@ -102,6 +102,13 @@
       "params": "{\"epsg\"?: \"EPSG code for the IFC data (IFC has no CRS — default: prompted, e.g. 32643)\"}"
     },
     {
+      "id": "add-points",
+      "label": "Add\nPoints",
+      "help": "Create a new point layer from coordinates. Paste lat/lon pairs manually (name, lat, lon — one per line) or load a CSV file. Auto-detects latitude/longitude columns; prompts if not found. Saves as GeoPackage and loads into RustGIS.",
+      "icon": "zoom_full",
+      "params": "{\"epsg\"?: \"EPSG code for the input coordinates (default: prompted, usually 4326 for WGS84 lat/lon)\"}"
+    },
+    {
       "id": "debug-select",
       "label": "Debug\nSelect API",
       "help": "Test all known selection API calls and log results. Run once to find the working API — check RustGIS console/log for results.",
@@ -199,6 +206,12 @@
         "id": "load-ifc-btn",
         "command": "load-ifc",
         "label": "Load IFC  (buildings_lod1)"
+      },
+      {
+        "kind": "button",
+        "id": "add-points-btn",
+        "command": "add-points",
+        "label": "Add Points  (manual or CSV)"
       },
       {
         "kind": "button",
