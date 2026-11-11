@@ -886,10 +886,23 @@ def _geom_to_kml(geom):
 
 def _write_kml(features, kml_path, layer_name="export"):
     """Write features to a KML file. Returns count written."""
-    import xml.etree.ElementTree as ET
+    import re as _re
+
+    # XML-safe: escape markup chars AND strip control characters invalid in XML 1.0
+    _XML_INVALID = _re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]')
 
     def esc(s):
-        return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+        s = _XML_INVALID.sub("", str(s))
+        return (s.replace("&", "&amp;")
+                 .replace("<", "&lt;")
+                 .replace(">", "&gt;")
+                 .replace('"', "&quot;")
+                 .replace("'", "&apos;"))
+
+    # Ensure parent directory exists
+    parent = os.path.dirname(kml_path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
 
     lines = [
         '<?xml version="1.0" encoding="UTF-8"?>',
@@ -905,7 +918,6 @@ def _write_kml(features, kml_path, layer_name="export"):
         geom_xml = _geom_to_kml(geom)
         if not geom_xml:
             continue
-        # Pick a display name
         name = next((str(props[k]) for k in ("name", "Name", "NAME", "id", "ID") if props.get(k)), f"Feature {written+1}")
         lines.append(f'  <Placemark><name>{esc(name)}</name>')
         if props:
@@ -919,8 +931,16 @@ def _write_kml(features, kml_path, layer_name="export"):
         written += 1
     lines.append('  </Document></kml>')
 
+    content = "\n".join(lines)
     with open(kml_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
+        f.write(content)
+
+    # Verify file has content (empty file causes "invalid token" in Google Earth)
+    size = os.path.getsize(kml_path)
+    if size == 0:
+        raise RuntimeError(f"KML file was written but is empty: {kml_path}")
+
+    _log(f"KML written: {written} features, {size} bytes → {kml_path}")
     return written
 
 
