@@ -375,48 +375,133 @@ def handle_panel_state(req):
     return _panel_state()
 
 
+def _ask_set_projection_dialog(layer_names, active_name, initial_epsg):
+    """Show EPSG picker + checkbox list of layers. Returns (epsg_str, [layer_names]) or (None, [])."""
+    import tkinter as tk
+    from tkinter import ttk
+
+    result = {"epsg": None, "layers": []}
+
+    root = tk.Tk()
+    root.title("Set Projection")
+    root.resizable(False, True)
+    root.attributes("-topmost", True)
+
+    tk.Label(root, text="Set Projection", font=("Segoe UI", 11, "bold")).pack(padx=16, pady=(14, 2))
+    tk.Label(root, text="Assign an EPSG CRS to one or more layers.",
+             font=("Segoe UI", 9), fg="#555").pack(padx=16, pady=(0, 8))
+
+    # EPSG row
+    fe = tk.Frame(root); fe.pack(padx=16, pady=4, fill="x")
+    tk.Label(fe, text="EPSG / CRS:", width=14, anchor="w", font=("Segoe UI", 9)).pack(side="left")
+    epsg_var = tk.StringVar(value=initial_epsg or "EPSG:4326 — WGS 84")
+    choices = _epsg_choices()
+    cb = ttk.Combobox(fe, textvariable=epsg_var, values=choices,
+                      width=42, font=("Segoe UI", 9))
+    cb.pack(side="left")
+
+    # Layer checklist
+    tk.Label(root, text="Apply to layers:", font=("Segoe UI", 9, "bold"), anchor="w").pack(
+        padx=16, pady=(10, 2), fill="x")
+
+    # Scrollable frame
+    outer = tk.Frame(root, relief="sunken", bd=1)
+    outer.pack(padx=16, fill="both", expand=True)
+    canvas = tk.Canvas(outer, highlightthickness=0,
+                       height=min(28 * len(layer_names) + 4, 240))
+    sb = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+    canvas.configure(yscrollcommand=sb.set)
+    sb.pack(side="right", fill="y")
+    canvas.pack(side="left", fill="both", expand=True)
+    inner = tk.Frame(canvas)
+    canvas.create_window((0, 0), window=inner, anchor="nw")
+    inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+
+    check_vars = {}
+    for name in layer_names:
+        var = tk.BooleanVar(value=True)   # all checked by default
+        check_vars[name] = var
+        tk.Checkbutton(inner, text=name, variable=var,
+                       font=("Segoe UI", 9), anchor="w").pack(fill="x", padx=4, pady=1)
+
+    # Select all / none buttons
+    fsel = tk.Frame(root); fsel.pack(padx=16, pady=(4, 0), fill="x")
+    def select_all():
+        for v in check_vars.values(): v.set(True)
+    def select_none():
+        for v in check_vars.values(): v.set(False)
+    tk.Button(fsel, text="Select All", font=("Segoe UI", 8), command=select_all).pack(side="left", padx=(0, 4))
+    tk.Button(fsel, text="Deselect All", font=("Segoe UI", 8), command=select_none).pack(side="left")
+
+    # OK / Cancel
+    fb = tk.Frame(root); fb.pack(padx=16, pady=12, fill="x")
+
+    def on_ok():
+        raw = epsg_var.get().strip()
+        epsg = raw.split("—")[0].strip().replace("EPSG:", "").strip() if "—" in raw else raw
+        chosen_layers = [n for n, v in check_vars.items() if v.get()]
+        if not chosen_layers:
+            tk.messagebox.showerror("No layers", "Select at least one layer.", parent=root)
+            return
+        result["epsg"] = epsg
+        result["layers"] = chosen_layers
+        root.destroy()
+
+    def on_cancel():
+        root.destroy()
+
+    tk.Button(fb, text="OK", width=10, font=("Segoe UI", 9),
+              command=on_ok, default="active").pack(side="right", padx=(4, 0))
+    tk.Button(fb, text="Cancel", width=10, font=("Segoe UI", 9),
+              command=on_cancel).pack(side="right")
+
+    root.bind("<Return>", lambda e: on_ok())
+    root.bind("<Escape>", lambda e: on_cancel())
+    root.update_idletasks()
+    w = root.winfo_reqwidth()
+    h = min(root.winfo_reqheight(), root.winfo_screenheight() - 100)
+    sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+    root.geometry(f"{w}x{h}+{(sw-w)//2}+{(sh-h)//2}")
+    root.mainloop()
+
+    return result["epsg"], result["layers"]
+
+
 def handle_set_projection(req):
     global _last_epsg
     params = req.get("params") or {}
-    panel = req.get("panel") or {}
 
     epsg = params.get("epsg") or params.get("crs")
+    explicit_layer = params.get("layer")
 
-    if not epsg:
-        chosen = _ask_combobox(
-            "Set Projection",
-            "Select or type an EPSG projection:",
-            _epsg_choices(),
-            initial=_last_epsg,
-        )
-        if not chosen:
+    # Script/CLI shortcut: epsg + layer both provided — no dialog needed
+    if epsg and explicit_layer:
+        epsg_str = str(epsg).strip()
+        if not epsg_str.upper().startswith("EPSG:"):
+            epsg_str = f"EPSG:{epsg_str}"
+        _call("layer.defineProjection", {"layer": explicit_layer, "crs": epsg_str})
+        msg = f"Projection set to {epsg_str} on {explicit_layer}"
+        _notify(msg)
+        return {"panel": {"items": {"proj-status": {"text": msg}}}}
+
+    # Fetch all vector layers for the dialog
+    all_layers = _call("host.layers", {}) or []
+    layer_names = [l["name"] for l in all_layers if not l.get("raster")]
+    if not layer_names:
+        _notify("No vector layers loaded.", error=True)
+        return {"panel": {"items": {"proj-status": {"text": "No layers loaded."}}}}
+    active_name = next((l["name"] for l in all_layers if not l.get("raster") and l.get("active")), layer_names[0])
+
+    # If EPSG already given (partial script call), still show layer picker
+    if epsg:
+        targets = layer_names  # apply to all if epsg pre-supplied without layer
+    else:
+        epsg, targets = _ask_set_projection_dialog(layer_names, active_name, _last_epsg)
+        if not epsg:
             return {"panel": {"items": {"proj-status": {"text": "Cancelled."}}}}
-        # Accept bare number "27700" or full "EPSG:27700 — ..." string
-        epsg = chosen.split("—")[0].strip().replace("EPSG:", "").strip() if "—" in chosen else chosen.strip()
 
     _last_epsg = str(epsg).strip()
-
-    # Normalise to "EPSG:XXXX"
-    epsg_str = str(epsg).strip()
-    if not epsg_str.upper().startswith("EPSG:"):
-        epsg_str = f"EPSG:{epsg_str}"
-
-    # Explicit layer param (script/CLI) takes priority
-    explicit_layer = params.get("layer")
-    if explicit_layer:
-        targets = [explicit_layer]
-    else:
-        # Apply to every selected layer; fall back to active layer
-        all_layers = _call("host.layers", {}) or []
-        selected = [l["name"] for l in all_layers if l.get("selected")]
-        if not selected:
-            # Nothing selected — use active layer
-            active = next((l["name"] for l in all_layers if l.get("active")), None)
-            if not active:
-                _notify("No layer selected or active.", error=True)
-                return {"panel": {"items": {"proj-status": {"text": "No layer selected."}}}}
-            selected = [active]
-        targets = selected
+    epsg_str = f"EPSG:{epsg}" if not str(epsg).upper().startswith("EPSG:") else str(epsg)
 
     for name in targets:
         _call("layer.defineProjection", {"layer": name, "crs": epsg_str})
@@ -426,14 +511,7 @@ def handle_set_projection(req):
     msg = f"Projection set to {epsg_str} on {names}"
     _notify(msg)
     _log(msg)
-
-    return {
-        "panel": {
-            "items": {
-                "proj-status": {"text": msg}
-            }
-        }
-    }
+    return {"panel": {"items": {"proj-status": {"text": msg}}}}
 
 
 # ---------------------------------------------------------------------------

@@ -1,7 +1,7 @@
 {
   "id": "geocentroid-gis-tools",
   "name": "GIS Tools",
-  "version": "1.9.5",
+  "version": "1.9.6",
   "description": "EPSG projection, layer merge, DXF/CSV/GeoPackage/SHP/KML export, save to original file, basemap loader, containment check, donut fix, IFC loader, add points, buffer points by area.",
   "author": "Arun Prashad",
   "homepage": "https://geocentroid.ai",
