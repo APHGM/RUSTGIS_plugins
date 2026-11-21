@@ -1,7 +1,7 @@
 {
   "id": "geocentroid-gis-tools",
   "name": "GIS Tools",
-  "version": "1.9.6",
+  "version": "1.9.7",
   "description": "EPSG projection, layer merge, DXF/CSV/GeoPackage/SHP/KML export, save to original file, basemap loader, containment check, donut fix, IFC loader, add points, buffer points by area.",
   "author": "Arun Prashad",
   "homepage": "https://geocentroid.ai",
@@ -142,11 +142,13 @@
         "label": "Active Layer",
         "text": "Open a project to see layers."
       },
+
+      { "kind": "text", "id": "sep-projection", "label": "── PROJECTION ──", "text": "" },
       {
         "kind": "button",
         "id": "apply-btn",
         "command": "set-projection",
-        "label": "Set Projection  (Tools pane → epsg: 27700)"
+        "label": "Set Projection"
       },
       {
         "kind": "text",
@@ -154,23 +156,13 @@
         "label": "Projection Status",
         "text": ""
       },
-      {
-        "kind": "button",
-        "id": "basemap-btn",
-        "command": "load-basemap",
-        "label": "Load Basemap  (Tools pane → basemap: osm)"
-      },
-      {
-        "kind": "button",
-        "id": "merge-btn",
-        "command": "merge-layers",
-        "label": "Merge All Layers"
-      },
+
+      { "kind": "text", "id": "sep-export", "label": "── EXPORT ──", "text": "" },
       {
         "kind": "button",
         "id": "dxf-btn",
         "command": "export-dxf",
-        "label": "Export DXF  (Tools pane → epsg: 27700)"
+        "label": "Export DXF"
       },
       {
         "kind": "button",
@@ -180,15 +172,49 @@
       },
       {
         "kind": "button",
+        "id": "table-btn",
+        "command": "export-table",
+        "label": "Export Table to CSV"
+      },
+      {
+        "kind": "button",
         "id": "save-original-btn",
         "command": "save-original",
         "label": "Save to Original File"
       },
+
+      { "kind": "text", "id": "sep-load", "label": "── LOAD ──", "text": "" },
       {
         "kind": "button",
-        "id": "table-btn",
-        "command": "export-table",
-        "label": "Export Table to CSV"
+        "id": "basemap-btn",
+        "command": "load-basemap",
+        "label": "Load Basemap  (Tools pane → basemap: osm)"
+      },
+      {
+        "kind": "button",
+        "id": "load-ifc-btn",
+        "command": "load-ifc",
+        "label": "Load IFC  (buildings_lod1)"
+      },
+      {
+        "kind": "button",
+        "id": "add-points-btn",
+        "command": "add-points",
+        "label": "Add Points  (manual or CSV)"
+      },
+
+      { "kind": "text", "id": "sep-analysis", "label": "── ANALYSIS ──", "text": "" },
+      {
+        "kind": "button",
+        "id": "merge-btn",
+        "command": "merge-layers",
+        "label": "Merge All Layers"
+      },
+      {
+        "kind": "button",
+        "id": "buffer-points-btn",
+        "command": "buffer-points",
+        "label": "Buffer Points by Area"
       },
       {
         "kind": "button",
@@ -200,32 +226,10 @@
         "kind": "button",
         "id": "donut-btn",
         "command": "fix-donuts",
-        "label": "Fix Donuts — Cut Holes in Outer Polygons"
+        "label": "Fix Donuts"
       },
-      {
-        "kind": "text",
-        "id": "action-status",
-        "label": "Status",
-        "text": ""
-      },
-      {
-        "kind": "button",
-        "id": "load-ifc-btn",
-        "command": "load-ifc",
-        "label": "Load IFC  (buildings_lod1)"
-      },
-      {
-        "kind": "button",
-        "id": "buffer-points-btn",
-        "command": "buffer-points",
-        "label": "Buffer Points by Area"
-      },
-      {
-        "kind": "button",
-        "id": "add-points-btn",
-        "command": "add-points",
-        "label": "Add Points  (manual or CSV)"
-      },
+
+      { "kind": "text", "id": "sep-navigate", "label": "── NAVIGATE ──", "text": "" },
       {
         "kind": "button",
         "id": "nav-prev-btn",
@@ -242,6 +246,14 @@
         "kind": "text",
         "id": "nav-status",
         "label": "Feature",
+        "text": ""
+      },
+
+      { "kind": "text", "id": "sep-status", "label": "── STATUS ──", "text": "" },
+      {
+        "kind": "text",
+        "id": "action-status",
+        "label": "Last Action",
         "text": ""
       }
     ]

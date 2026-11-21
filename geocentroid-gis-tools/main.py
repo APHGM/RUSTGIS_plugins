@@ -575,10 +575,6 @@ def handle_export_dxf(req):
     # ── 1. Resolve target CRS ────────────────────────────────────────────────
     epsg = params.get("epsg")
     if not epsg:
-        tree_val = (panel.get("values") or {}).get("epsg-tree")
-        if tree_val and str(tree_val).lstrip("_").isdigit():
-            epsg = int(tree_val)
-    if not epsg:
         # Fall back to the map's current display projection
         try:
             view = _call("host.view", {}) or {}
@@ -588,10 +584,17 @@ def handle_export_dxf(req):
         except Exception:
             pass
     if not epsg:
-        raise RuntimeError(
-            "Select an EPSG code in the panel tree before exporting, "
-            "or run with {\"epsg\": 27700}."
+        # Ask user via dialog
+        chosen = _ask_combobox(
+            "Export DXF — Output CRS",
+            "Select the coordinate system for the DXF output:",
+            _epsg_choices(),
+            initial=_last_epsg or "EPSG:27700 — British National Grid",
         )
+        if not chosen:
+            raise RuntimeError("Export cancelled.")
+        epsg = chosen.split("—")[0].strip().replace("EPSG:", "").strip() if "—" in chosen else chosen.strip()
+        _last_epsg = str(epsg).strip()
 
     epsg_str = f"EPSG:{epsg}"
     _log(f"Target CRS: {epsg_str}")
