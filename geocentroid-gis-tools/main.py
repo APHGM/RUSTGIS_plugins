@@ -1426,7 +1426,40 @@ def _geom_bbox(geom):
             max(lngs) + pad_lng, max(lats) + pad_lat]
 
 
+def _nav_zoom_select(layer_name, feat, idx):
+    """Zoom to feature bbox and try to select/highlight it in the table."""
+    geom = feat.get("geometry") or {}
+    bbox = _geom_bbox(geom)
+    if bbox:
+        for zoom_call, zoom_params in [
+            ("map.zoomToBbox",   {"bbox": bbox}),
+            ("map.fitBounds",    {"bounds": bbox}),
+            ("map.zoomToExtent", {"extent": bbox}),
+        ]:
+            try:
+                _call(zoom_call, zoom_params)
+                break
+            except Exception:
+                continue
+
+    # Try every known selection API variant
+    for call_name, kw in [
+        ("layer.selectFeatures", {"layer": layer_name, "indices": [idx]}),
+        ("layer.selectFeatures", {"layer": layer_name, "ids": [idx + 1]}),
+        ("layer.selectFeature",  {"layer": layer_name, "index": idx}),
+        ("layer.select",         {"layer": layer_name, "index": idx}),
+        ("layer.select",         {"layer": layer_name, "indices": [idx]}),
+        ("layer.highlightFeature",{"layer": layer_name, "index": idx}),
+    ]:
+        try:
+            _call(call_name, kw)
+            break
+        except Exception:
+            continue
+
+
 def _nav_step(action):
+    """Navigate features: first | prev | next | last | selected."""
     layers = _call("host.layers", {}) or []
     active = next((l for l in layers if not l.get("raster") and l.get("active")), None)
     if not active:
@@ -1436,48 +1469,59 @@ def _nav_step(action):
     layer_name = active["name"]
     layer_id = active.get("id") or layer_name
 
-    # Always reload features (process may have restarted)
     raw = _call("host.features", {"layer": layer_name}) or {}
-    feats = raw.get("features", []) if isinstance(raw, dict) else []
-    n = len(feats)
-    if n == 0:
+    all_feats = raw.get("features", []) if isinstance(raw, dict) else []
+    if not all_feats:
         _notify("No features in layer.", error=True)
         return {"panel": {"items": {"nav-status": {"text": "No features."}}}}
 
-    # Load persisted index; reset if layer changed
-    saved_idx, saved_layer = _nav_load()
-    if saved_layer != layer_id:
-        saved_idx = -1
-
-    if action == "next":
-        idx = (saved_idx + 1) % n
-    else:  # prev
-        idx = (saved_idx - 1) % n
-
-    _nav_save(idx, layer_id)
-
-    feat = feats[idx]
-
-    # --- Zoom to feature bbox ---
-    geom = feat.get("geometry") or {}
-    bbox = _geom_bbox(geom)
-    if bbox:
-        for zoom_call, zoom_params in [
-            ("map.zoomToBbox",  {"bbox": bbox}),
-            ("map.fitBounds",   {"bounds": bbox}),
-            ("map.zoomToExtent",{"extent": bbox}),
-        ]:
+    # For "selected" mode: filter to only selected features
+    if action == "selected":
+        sel_feats = [(i, f) for i, f in enumerate(all_feats) if (f.get("properties") or {}).get("_selected") or f.get("selected")]
+        # Fallback: try asking RustGIS for selection
+        if not sel_feats:
             try:
-                _call(zoom_call, zoom_params)
-                break
+                sel_raw = _call("layer.selectedFeatures", {"layer": layer_name}) or {}
+                sel_ids = set(sel_raw.get("indices") or sel_raw.get("ids") or [])
+                if sel_ids:
+                    sel_feats = [(i, f) for i, f in enumerate(all_feats) if i in sel_ids or (i + 1) in sel_ids]
             except Exception:
-                continue
+                pass
+        if not sel_feats:
+            _notify("No features selected in layer.", error=True)
+            return {"panel": {"items": {"nav-status": {"text": "No features selected."}}}}
+        saved_idx, saved_layer = _nav_load()
+        if saved_layer != layer_id:
+            saved_idx = -1
+        # Find position within selected list
+        sel_positions = [i for i, _ in sel_feats]
+        cur_pos = next((j for j, si in enumerate(sel_positions) if si > saved_idx), 0)
+        real_idx, feat = sel_feats[cur_pos]
+        _nav_save(real_idx, layer_id)
+        n = len(sel_feats)
+        pos_label = f"selected {cur_pos + 1}/{n}  (feature {real_idx + 1})"
+    else:
+        feats = all_feats
+        n = len(feats)
+        saved_idx, saved_layer = _nav_load()
+        if saved_layer != layer_id:
+            saved_idx = -1
 
-    # --- Select feature in attribute table ---
-    try:
-        _call("layer.select", {"layer": layer_name, "index": idx})
-    except Exception:
-        pass
+        if action == "first":
+            idx = 0
+        elif action == "last":
+            idx = n - 1
+        elif action == "next":
+            idx = (saved_idx + 1) % n
+        else:  # prev
+            idx = (saved_idx - 1) % n
+
+        _nav_save(idx, layer_id)
+        feat = feats[idx]
+        real_idx = idx
+        pos_label = f"{idx + 1} / {n}"
+
+    _nav_zoom_select(layer_name, feat, real_idx)
 
     props = feat.get("properties") or {}
     label = next((str(props[k]) for k in ("name", "Name", "NAME", "id", "ID", "label") if props.get(k)), None)
@@ -1485,17 +1529,25 @@ def _nav_step(action):
         label = str(next(iter(props.values())))
     label = label or "(no attributes)"
 
-    msg = f"Feature {idx + 1} / {n}:  {label}"
+    msg = f"Feature {pos_label}:  {label}"
     _notify(msg)
     return {"panel": {"items": {"nav-status": {"text": msg}}}}
 
 
-def handle_feature_next(req):
-    return _nav_step("next")
-
+def handle_feature_first(req):
+    return _nav_step("first")
 
 def handle_feature_prev(req):
     return _nav_step("prev")
+
+def handle_feature_next(req):
+    return _nav_step("next")
+
+def handle_feature_last(req):
+    return _nav_step("last")
+
+def handle_feature_selected(req):
+    return _nav_step("selected")
 
 
 
@@ -2377,8 +2429,11 @@ HANDLERS = {
     "export-table":      handle_export_table,
     "check-containment": handle_check_containment,
     "fix-donuts":        handle_fix_donuts,
-    "feature-next":      handle_feature_next,
+    "feature-first":     handle_feature_first,
     "feature-prev":      handle_feature_prev,
+    "feature-next":      handle_feature_next,
+    "feature-last":      handle_feature_last,
+    "feature-selected":  handle_feature_selected,
     "load-ifc":          handle_load_ifc,
     "buffer-points":     handle_buffer_points,
     "add-points":        handle_add_points,

@@ -1,7 +1,7 @@
 {
   "id": "geocentroid-gis-tools",
   "name": "GIS Tools",
-  "version": "1.9.7",
+  "version": "1.9.8",
   "description": "EPSG projection, layer merge, DXF/CSV/GeoPackage/SHP/KML export, save to original file, basemap loader, containment check, donut fix, IFC loader, add points, buffer points by area.",
   "author": "Arun Prashad",
   "homepage": "https://geocentroid.ai",
@@ -81,16 +81,37 @@
       "params": "{\"layer\"?: \"layer name or id (default: active/selected layer)\"}"
     },
     {
-      "id": "feature-next",
-      "label": "Next\nFeature",
-      "help": "Zoom to the next feature in the active layer. Cycles through all features one by one.",
+      "id": "feature-first",
+      "label": "First\nFeature",
+      "help": "Zoom to the first feature in the active layer and highlight it in the attribute table.",
       "icon": "zoom_full",
       "params": "{}"
     },
     {
       "id": "feature-prev",
       "label": "Prev\nFeature",
-      "help": "Zoom to the previous feature in the active layer.",
+      "help": "Zoom to the previous feature in the active layer and highlight it in the attribute table.",
+      "icon": "zoom_full",
+      "params": "{}"
+    },
+    {
+      "id": "feature-next",
+      "label": "Next\nFeature",
+      "help": "Zoom to the next feature in the active layer and highlight it in the attribute table.",
+      "icon": "zoom_full",
+      "params": "{}"
+    },
+    {
+      "id": "feature-last",
+      "label": "Last\nFeature",
+      "help": "Zoom to the last feature in the active layer and highlight it in the attribute table.",
+      "icon": "zoom_full",
+      "params": "{}"
+    },
+    {
+      "id": "feature-selected",
+      "label": "Selected\nFeatures",
+      "help": "Navigate through only the selected features in the active layer, zooming to each in turn.",
       "icon": "zoom_full",
       "params": "{}"
     },
@@ -232,6 +253,12 @@
       { "kind": "text", "id": "sep-navigate", "label": "── NAVIGATE ──", "text": "" },
       {
         "kind": "button",
+        "id": "nav-first-btn",
+        "command": "feature-first",
+        "label": "◀◀  First Feature"
+      },
+      {
+        "kind": "button",
         "id": "nav-prev-btn",
         "command": "feature-prev",
         "label": "◀  Previous Feature"
@@ -241,6 +268,18 @@
         "id": "nav-next-btn",
         "command": "feature-next",
         "label": "▶  Next Feature"
+      },
+      {
+        "kind": "button",
+        "id": "nav-last-btn",
+        "command": "feature-last",
+        "label": "▶▶  Last Feature"
+      },
+      {
+        "kind": "button",
+        "id": "nav-selected-btn",
+        "command": "feature-selected",
+        "label": "☆  Navigate Selected"
       },
       {
         "kind": "text",
