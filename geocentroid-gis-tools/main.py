@@ -1442,17 +1442,13 @@ def _nav_zoom_select(layer_name, feat, idx):
             except Exception:
                 continue
 
-    # layer.select is the only working API (confirmed via debug-select)
-    # Try feature object first (may trigger table scroll), then index variants
-    feat_id = feat.get("id")
-    select_variants = [
-        {"layer": layer_name, "feature": feat},
+    # layer.select is the only working API (confirmed via debug-select).
+    # Use array index only — feature object/id approach selects the wrong row
+    # because the feature's internal id is 0-based while table Feature IDs are 1-based.
+    for kw in [
         {"layer": layer_name, "index": idx},
         {"layer": layer_name, "indices": [idx]},
-    ]
-    if feat_id is not None:
-        select_variants.insert(1, {"layer": layer_name, "feature": feat_id})
-    for kw in select_variants:
+    ]:
         try:
             _call("layer.select", kw)
             break
