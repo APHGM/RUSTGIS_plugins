@@ -345,9 +345,21 @@ def _panel_state(layers=None):
         geo = active.get("geometry") or ""
         if geo:
             layer_text += f"  [{geo}]"
-        features = active.get("features", 0)
-        if features:
-            layer_text += f"  {features} features"
+        total = active.get("features") or active.get("featureCount") or active.get("count") or 0
+        # Try to get selected count from layer object first, then via API
+        selected = (active.get("selected") or active.get("selectedCount")
+                    or active.get("selectionCount") or 0)
+        if not selected:
+            try:
+                sel_raw = _call("layer.selectedFeatures", {"layer": active["name"]}) or {}
+                sel_list = sel_raw.get("features") or sel_raw.get("indices") or sel_raw.get("ids") or []
+                selected = len(sel_list)
+            except Exception:
+                selected = 0
+        if total:
+            layer_text += f"  {total} features"
+            if selected:
+                layer_text += f"  ({selected} selected)"
     else:
         layer_text = "No active vector layer" if vector_layers else "No vector layers loaded"
 
@@ -1529,7 +1541,12 @@ def _nav_step(action):
 
     msg = f"Feature {pos_label}:  {label}"
     _notify(msg)
-    return {"panel": {"items": {"nav-status": {"text": msg}}}}
+    n_total = len(all_feats)
+    info_text = f"{layer_name}  {n_total} features  (1 selected)"
+    return {"panel": {"items": {
+        "nav-status":  {"text": msg},
+        "layer-info":  {"text": info_text},
+    }}}
 
 
 def handle_feature_first(req):
