@@ -575,6 +575,7 @@ def _transform_ring(ring, transformer):
 
 
 def handle_export_dxf(req):
+    global _last_epsg
     import ezdxf
     import tkinter as tk
     from tkinter import filedialog
