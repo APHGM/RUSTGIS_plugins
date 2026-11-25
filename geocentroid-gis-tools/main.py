@@ -406,8 +406,14 @@ def _ask_set_projection_dialog(layer_names, active_name, initial_epsg):
     # EPSG row
     fe = tk.Frame(root); fe.pack(padx=16, pady=4, fill="x")
     tk.Label(fe, text="EPSG / CRS:", width=14, anchor="w", font=("Segoe UI", 9)).pack(side="left")
-    epsg_var = tk.StringVar(value=initial_epsg or "EPSG:4326 — WGS 84")
     choices = _epsg_choices()
+    # Match initial_epsg (e.g. "EPSG:2193") to the full choice label
+    default_choice = "EPSG:4326 — WGS 84"
+    if initial_epsg:
+        code = str(initial_epsg).upper().replace("EPSG:", "").strip()
+        matched = next((c for c in choices if c.startswith(f"EPSG:{code} ") or c.startswith(f"EPSG:{code}—")), None)
+        default_choice = matched if matched else initial_epsg
+    epsg_var = tk.StringVar(value=default_choice)
     cb = ttk.Combobox(fe, textvariable=epsg_var, values=choices,
                       width=42, font=("Segoe UI", 9))
     cb.pack(side="left")
@@ -504,11 +510,36 @@ def handle_set_projection(req):
         return {"panel": {"items": {"proj-status": {"text": "No layers loaded."}}}}
     active_name = next((l["name"] for l in all_layers if not l.get("raster") and l.get("active")), layer_names[0])
 
+    # Determine the best default EPSG to pre-fill:
+    # 1) active layer's own CRS, 2) current map view projection, 3) last used
+    default_epsg = _last_epsg
+    try:
+        # Try active layer CRS first
+        active_layer = next((l for l in all_layers if not l.get("raster") and l.get("active")), None)
+        if active_layer:
+            crs = active_layer.get("crs") or active_layer.get("projection") or active_layer.get("epsg") or ""
+            if crs:
+                code = str(crs).upper().replace("EPSG:", "").strip()
+                if code.isdigit():
+                    default_epsg = f"EPSG:{code}"
+    except Exception:
+        pass
+    if not default_epsg:
+        try:
+            view = _call("host.view", {}) or {}
+            proj = view.get("projection") or view.get("crs") or ""
+            if proj:
+                code = str(proj).upper().replace("EPSG:", "").strip()
+                if code.isdigit():
+                    default_epsg = f"EPSG:{code}"
+        except Exception:
+            pass
+
     # If EPSG already given (partial script call), still show layer picker
     if epsg:
         targets = layer_names  # apply to all if epsg pre-supplied without layer
     else:
-        epsg, targets = _ask_set_projection_dialog(layer_names, active_name, _last_epsg)
+        epsg, targets = _ask_set_projection_dialog(layer_names, active_name, default_epsg)
         if not epsg:
             return {"panel": {"items": {"proj-status": {"text": "Cancelled."}}}}
 
