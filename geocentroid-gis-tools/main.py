@@ -510,30 +510,34 @@ def handle_set_projection(req):
         return {"panel": {"items": {"proj-status": {"text": "No layers loaded."}}}}
     active_name = next((l["name"] for l in all_layers if not l.get("raster") and l.get("active")), layer_names[0])
 
-    # Determine the best default EPSG to pre-fill:
-    # 1) active layer's own CRS, 2) current map view projection, 3) last used
-    default_epsg = _last_epsg
+    # Determine the best default EPSG to pre-fill.
+    # Priority: 1) map view projection (status bar), 2) active layer CRS, 3) last used
+    default_epsg = ""
+    # 1 — map view (most reliable — matches what the status bar shows)
     try:
-        # Try active layer CRS first
-        active_layer = next((l for l in all_layers if not l.get("raster") and l.get("active")), None)
-        if active_layer:
-            crs = active_layer.get("crs") or active_layer.get("projection") or active_layer.get("epsg") or ""
-            if crs:
-                code = str(crs).upper().replace("EPSG:", "").strip()
-                if code.isdigit():
-                    default_epsg = f"EPSG:{code}"
+        view = _call("host.view", {}) or {}
+        proj = view.get("projection") or view.get("crs") or ""
+        if proj and ":" in str(proj):
+            code = str(proj).split(":")[-1].strip()
+            if code.isdigit():
+                default_epsg = f"EPSG:{code}"
     except Exception:
         pass
+    # 2 — active layer CRS
     if not default_epsg:
         try:
-            view = _call("host.view", {}) or {}
-            proj = view.get("projection") or view.get("crs") or ""
-            if proj:
-                code = str(proj).upper().replace("EPSG:", "").strip()
-                if code.isdigit():
-                    default_epsg = f"EPSG:{code}"
+            active_layer = next((l for l in all_layers if not l.get("raster") and l.get("active")), None)
+            if active_layer:
+                crs = active_layer.get("crs") or active_layer.get("projection") or active_layer.get("epsg") or ""
+                if crs:
+                    code = str(crs).upper().replace("EPSG:", "").strip()
+                    if code.isdigit():
+                        default_epsg = f"EPSG:{code}"
         except Exception:
             pass
+    # 3 — last used EPSG from this session
+    if not default_epsg:
+        default_epsg = _last_epsg
 
     # If EPSG already given (partial script call), still show layer picker
     if epsg:
