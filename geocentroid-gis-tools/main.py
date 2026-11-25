@@ -574,6 +574,27 @@ def _transform_ring(ring, transformer):
     return result
 
 
+def _line_midpoint(pts):
+    """Return (x, y) at the midpoint along a polyline by arc length."""
+    import math
+    if not pts:
+        return (0.0, 0.0)
+    if len(pts) == 1:
+        return pts[0][0], pts[0][1]
+    total = sum(math.hypot(pts[i+1][0]-pts[i][0], pts[i+1][1]-pts[i][1])
+                for i in range(len(pts)-1))
+    half = total / 2.0
+    dist = 0.0
+    for i in range(len(pts)-1):
+        seg = math.hypot(pts[i+1][0]-pts[i][0], pts[i+1][1]-pts[i][1])
+        if dist + seg >= half:
+            t = (half - dist) / seg if seg > 0 else 0
+            return (pts[i][0] + t*(pts[i+1][0]-pts[i][0]),
+                    pts[i][1] + t*(pts[i+1][1]-pts[i][1]))
+        dist += seg
+    return pts[-1][0], pts[-1][1]
+
+
 def handle_export_dxf(req):
     global _last_epsg
     import ezdxf
@@ -646,7 +667,31 @@ def handle_export_dxf(req):
     if not targets:
         raise RuntimeError("No vector layers to export.")
 
-    # ── 4. Build DXF ─────────────────────────────────────────────────────────
+    # ── 4. Pick label field ───────────────────────────────────────────────────
+    if not label_field:
+        # Collect field names from the first target layer
+        try:
+            sample_fc = _call("host.features", {"layer": targets[0]["id"]}) or {}
+            sample_feats = sample_fc.get("features") or []
+            fields = []
+            for sf in sample_feats[:5]:
+                for k in (sf.get("properties") or {}):
+                    if k not in fields:
+                        fields.append(k)
+        except Exception:
+            fields = []
+
+        field_choices = ["(none — layer name only)"] + fields
+        chosen_field = _ask_combobox(
+            "DXF Labels",
+            "Choose the attribute to use as the feature label:",
+            field_choices,
+            initial=field_choices[0],
+        )
+        if chosen_field and chosen_field != "(none — layer name only)":
+            label_field = chosen_field
+
+    # ── 5. Build DXF ─────────────────────────────────────────────────────────
     doc = ezdxf.new("R2010")
     doc.header["$INSUNITS"] = 6        # metres
     doc.header["$MEASUREMENT"] = 1     # metric
@@ -676,48 +721,68 @@ def handle_export_dxf(req):
             coords = geom.get("coordinates", [])
             props  = feat.get("properties") or {}
 
-            polygons = []
-            if gtype == "Polygon":
-                polygons = [coords]
-            elif gtype == "MultiPolygon":
-                polygons = coords
-            else:
-                continue
+            label_text = (
+                str(props[label_field])
+                if label_field and label_field in props and props[label_field] is not None
+                else layer_name
+            )
 
-            for polygon in polygons:
-                if not polygon:
-                    continue
-                outer_raw = polygon[0]
+            # ── Polygons ──────────────────────────────────────────────────
+            if gtype in ("Polygon", "MultiPolygon"):
+                polygons = [coords] if gtype == "Polygon" else coords
+                for polygon in polygons:
+                    if not polygon:
+                        continue
+                    outer = _transform_ring(polygon[0], transformer)
+                    if outer:
+                        msp.add_lwpolyline(outer, dxfattribs={"layer": dxf_geom, "closed": True})
+                    for inner_raw in polygon[1:]:
+                        inner = _transform_ring(inner_raw, transformer)
+                        if inner:
+                            msp.add_lwpolyline(inner, dxfattribs={"layer": dxf_geom, "closed": True})
+                    if outer:
+                        cx, cy = _poly_centroid(outer)
+                        th = _text_height(outer)
+                        text = msp.add_text(label_text,
+                                            dxfattribs={"layer": dxf_label, "height": th})
+                        text.set_placement((cx, cy),
+                                           align=ezdxf.enums.TextEntityAlignment.MIDDLE_CENTER)
+                    feature_count += 1
 
-                # Reproject outer ring WGS84 → target CRS
-                outer = _transform_ring(outer_raw, transformer)
-                if outer:
-                    msp.add_lwpolyline(outer, dxfattribs={"layer": dxf_geom, "closed": True})
+            # ── Lines ─────────────────────────────────────────────────────
+            elif gtype in ("LineString", "MultiLineString"):
+                lines = [coords] if gtype == "LineString" else coords
+                for line_raw in lines:
+                    pts = _transform_ring(line_raw, transformer)
+                    if not pts:
+                        continue
+                    msp.add_lwpolyline(pts, dxfattribs={"layer": dxf_geom, "closed": False})
+                    if label_field or True:   # always place label
+                        mx, my = _line_midpoint(pts)
+                        # text height: 1% of line length, min 1 m
+                        import math
+                        length = sum(math.hypot(pts[i+1][0]-pts[i][0], pts[i+1][1]-pts[i][1])
+                                     for i in range(len(pts)-1)) if len(pts) > 1 else 1.0
+                        th = max(length * 0.01, 1.0)
+                        text = msp.add_text(label_text,
+                                            dxfattribs={"layer": dxf_label, "height": th})
+                        text.set_placement((mx, my),
+                                           align=ezdxf.enums.TextEntityAlignment.MIDDLE_CENTER)
+                    feature_count += 1
 
-                # Inner rings (holes)
-                for inner_raw in polygon[1:]:
-                    inner = _transform_ring(inner_raw, transformer)
-                    if inner:
-                        msp.add_lwpolyline(inner, dxfattribs={"layer": dxf_geom, "closed": True})
-
-                # Label at centroid (already in target CRS)
-                label_text = (
-                    str(props.get(label_field, layer_name))
-                    if label_field and label_field in props
-                    else layer_name
-                )
-                cx, cy = _poly_centroid(outer)
-                th = _text_height(outer)
-
-                text = msp.add_text(
-                    label_text,
-                    dxfattribs={"layer": dxf_label, "height": th},
-                )
-                text.set_placement(
-                    (cx, cy),
-                    align=ezdxf.enums.TextEntityAlignment.MIDDLE_CENTER,
-                )
-                feature_count += 1
+            # ── Points ────────────────────────────────────────────────────
+            elif gtype in ("Point", "MultiPoint"):
+                pts_raw = [coords] if gtype == "Point" else coords
+                for pt_raw in pts_raw:
+                    if len(pt_raw) < 2:
+                        continue
+                    x, y = transformer.transform(pt_raw[0], pt_raw[1])
+                    msp.add_point((x, y), dxfattribs={"layer": dxf_geom})
+                    text = msp.add_text(label_text,
+                                        dxfattribs={"layer": dxf_label, "height": 5.0})
+                    text.set_placement((x, y),
+                                       align=ezdxf.enums.TextEntityAlignment.MIDDLE_CENTER)
+                    feature_count += 1
 
     doc.saveas(path)
 
