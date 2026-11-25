@@ -388,9 +388,9 @@ def handle_panel_state(req):
 
 
 def _ask_set_projection_dialog(layer_names, active_name, initial_epsg):
-    """Show EPSG picker + checkbox list of layers. Returns (epsg_str, [layer_names]) or (None, [])."""
+    """Show EPSG number entry + checkbox list of layers. Returns (epsg_str, [layer_names]) or (None, [])."""
     import tkinter as tk
-    from tkinter import ttk
+    from tkinter import ttk, messagebox
 
     result = {"epsg": None, "layers": []}
 
@@ -403,20 +403,40 @@ def _ask_set_projection_dialog(layer_names, active_name, initial_epsg):
     tk.Label(root, text="Assign an EPSG CRS to one or more layers.",
              font=("Segoe UI", 9), fg="#555").pack(padx=16, pady=(0, 8))
 
-    # EPSG row
-    fe = tk.Frame(root); fe.pack(padx=16, pady=4, fill="x")
-    tk.Label(fe, text="EPSG / CRS:", width=14, anchor="w", font=("Segoe UI", 9)).pack(side="left")
-    choices = _epsg_choices()
-    # Match initial_epsg (e.g. "EPSG:2193") to the full choice label
-    default_choice = "EPSG:4326 — WGS 84"
-    if initial_epsg:
-        code = str(initial_epsg).upper().replace("EPSG:", "").strip()
-        matched = next((c for c in choices if c.startswith(f"EPSG:{code} ") or c.startswith(f"EPSG:{code}—")), None)
-        default_choice = matched if matched else initial_epsg
-    epsg_var = tk.StringVar(value=default_choice)
-    cb = ttk.Combobox(fe, textvariable=epsg_var, values=choices,
-                      width=42, font=("Segoe UI", 9))
-    cb.pack(side="left")
+    # EPSG number entry — user types just the code, name resolves live
+    fe = tk.Frame(root); fe.pack(padx=16, pady=(4, 0), fill="x")
+    tk.Label(fe, text="EPSG code:", width=12, anchor="w", font=("Segoe UI", 9)).pack(side="left")
+    initial_code = str(initial_epsg).upper().replace("EPSG:", "").strip() if initial_epsg else "4326"
+    epsg_var = tk.StringVar(value=initial_code)
+    entry = tk.Entry(fe, textvariable=epsg_var, width=12, font=("Segoe UI", 10))
+    entry.pack(side="left")
+    entry.select_range(0, "end")
+
+    # CRS name label — resolved live from pyproj
+    name_var = tk.StringVar()
+    name_lbl = tk.Label(root, textvariable=name_var, font=("Segoe UI", 9, "italic"),
+                        fg="#1a6e1a", anchor="w")
+    name_lbl.pack(padx=16, pady=(2, 6), fill="x")
+
+    def _resolve_crs(code):
+        try:
+            from pyproj import CRS
+            crs = CRS.from_epsg(int(code))
+            return crs.name
+        except Exception:
+            return ""
+
+    def _on_code_change(*_):
+        code = epsg_var.get().strip()
+        if code.isdigit() and len(code) >= 4:
+            name = _resolve_crs(code)
+            name_var.set(f"  {name}" if name else "  (unknown EPSG code)")
+            name_lbl.config(fg="#1a6e1a" if name else "#cc0000")
+        else:
+            name_var.set("")
+
+    epsg_var.trace_add("write", _on_code_change)
+    _on_code_change()   # resolve initial value
 
     # Layer checklist
     tk.Label(root, text="Apply to layers:", font=("Segoe UI", 9, "bold"), anchor="w").pack(
@@ -455,13 +475,18 @@ def _ask_set_projection_dialog(layer_names, active_name, initial_epsg):
     fb = tk.Frame(root); fb.pack(padx=16, pady=12, fill="x")
 
     def on_ok():
-        raw = epsg_var.get().strip()
-        epsg = raw.split("—")[0].strip().replace("EPSG:", "").strip() if "—" in raw else raw
+        code = epsg_var.get().strip().replace("EPSG:", "").strip()
+        if not code.isdigit():
+            messagebox.showerror("Invalid EPSG", "Enter a numeric EPSG code (e.g. 27700).", parent=root)
+            return
+        if not _resolve_crs(code):
+            messagebox.showerror("Unknown EPSG", f"EPSG:{code} was not recognised. Check the code and try again.", parent=root)
+            return
         chosen_layers = [n for n, v in check_vars.items() if v.get()]
         if not chosen_layers:
-            tk.messagebox.showerror("No layers", "Select at least one layer.", parent=root)
+            messagebox.showerror("No layers", "Select at least one layer.", parent=root)
             return
-        result["epsg"] = epsg
+        result["epsg"] = code
         result["layers"] = chosen_layers
         root.destroy()
 
