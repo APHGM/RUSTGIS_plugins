@@ -889,6 +889,22 @@ def handle_merge_layers(req):
     if not vector_layers:
         raise RuntimeError("No vector layers found to merge.")
 
+    # Detect the CRS from source layers (prefer non-4326, use first found)
+    source_crs = None
+    for layer in vector_layers:
+        crs = layer.get("crs") or layer.get("projection") or layer.get("epsg") or ""
+        crs = str(crs).strip()
+        if crs and str(crs).upper().replace("EPSG:", "") not in ("4326", ""):
+            source_crs = crs if crs.upper().startswith("EPSG:") else f"EPSG:{crs}"
+            break
+    if not source_crs:
+        # All layers are 4326 or no CRS — still apply explicitly to be safe
+        for layer in vector_layers:
+            crs = layer.get("crs") or layer.get("projection") or layer.get("epsg") or ""
+            if crs:
+                source_crs = str(crs) if str(crs).upper().startswith("EPSG:") else f"EPSG:{crs}"
+                break
+
     all_features = []
     for layer in vector_layers:
         layer_name = layer["name"]
@@ -912,9 +928,19 @@ def handle_merge_layers(req):
 
     _call("host.addLayer", {"name": output_name, "geojson": merged_geojson})
 
+    # Apply source CRS to merged layer — host.addLayer defaults to EPSG:4326
+    crs_msg = ""
+    if source_crs:
+        try:
+            _call("layer.defineProjection", {"layer": output_name, "crs": source_crs})
+            crs_msg = f"  [{source_crs}]"
+        except Exception as e:
+            _log(f"Could not set CRS on merged layer: {e}")
+            crs_msg = "  [CRS not set — set manually]"
+
     msg = (
         f"Merged {len(all_features)} features from "
-        f"{len(vector_layers)} layer(s) into '{output_name}'"
+        f"{len(vector_layers)} layer(s) into '{output_name}'{crs_msg}"
     )
     _notify(msg)
     _log(msg)
