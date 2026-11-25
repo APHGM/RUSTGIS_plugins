@@ -546,12 +546,27 @@ def handle_set_projection(req):
     _last_epsg = str(epsg).strip()
     epsg_str = f"EPSG:{epsg}" if not str(epsg).upper().startswith("EPSG:") else str(epsg)
 
+    ok, skipped = [], []
     for name in targets:
-        _call("layer.defineProjection", {"layer": name, "crs": epsg_str})
+        try:
+            _call("layer.defineProjection", {"layer": name, "crs": epsg_str})
+            ok.append(name)
+        except Exception as e:
+            err = str(e)
+            if "streamed" in err.lower() or "memory" in err.lower() or "shapefile" in err.lower():
+                skipped.append(name)
+                _log(f"Skip '{name}': streamed/tiled layer does not support defineProjection")
+            else:
+                skipped.append(name)
+                _log(f"Skip '{name}': {err}")
 
-    count = len(targets)
-    names = ", ".join(targets) if count <= 3 else f"{count} layers"
-    msg = f"Projection set to {epsg_str} on {names}"
+    if ok:
+        names = ", ".join(ok) if len(ok) <= 3 else f"{len(ok)} layers"
+        msg = f"Projection set to {epsg_str} on {names}"
+        if skipped:
+            msg += f"  (skipped: {', '.join(skipped)} — streamed layers cannot be reprojected)"
+    else:
+        msg = f"No layers updated — all selected layers are streamed/tiled and do not support defineProjection"
     _notify(msg)
     _log(msg)
     return {"panel": {"items": {"proj-status": {"text": msg}}}}
